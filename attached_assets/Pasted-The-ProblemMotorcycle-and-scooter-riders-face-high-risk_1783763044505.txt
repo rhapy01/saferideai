@@ -1,0 +1,22 @@
+The ProblemMotorcycle and scooter riders face high risks from speeding, harsh braking, sharp turns, and unknown dangerous road segments — often without immediate feedback or ways to improve.The SolutionSafeRide AI turns any smartphone into an intelligent safety companion using only the phone’s GPS and accelerometer.How it works during a ride:Continuously monitors speed, acceleration, braking, and turning patterns.
+Detects risky behaviors in real time: speeding, harsh braking, and dangerous turns.
+Calculates and displays a live Safety Score (0–100) that updates every few seconds — instantly showing how safe the current riding style is.
+Logs risky moments with exact locations.
+
+After the ride:Shows a clear map highlighting risky road segments from that trip.
+Generates a personalized ride safety report powered by Gemma AI.
+Gemma analyzes the entire trip and delivers encouraging, actionable insights: “You had three harsh brakes in traffic — try increasing following distance by 2 seconds in stop-go conditions” or “Your turns were sharp at higher speeds on this stretch — consider slowing down earlier.”
+
+Riders get immediate understanding of what went well, what didn’t, and concrete improvements they can apply on the next ride.Key FeaturesLive Safety Score with color-coded feedback (green/yellow/red).
+Real-time event detection and alerts.
+Risk heatmap on an interactive map showing exactly where problems occurred.
+Gemma AI-powered coaching — natural, supportive explanations and personalized tips instead of raw data.
+One-tap post-ride report — perfect for reviewing progress over time.
+
+Hackathon Demo Flow (90 seconds, crystal clear)Open app → “Start Ride” (or “Simulate Ride” for instant demo).
+Watch the live Safety Score fluctuate as simulated/real sensor data comes in, with pop-up events.
+End ride → instantly see the map with risky segments marked.
+Gemma AI generates and displays the full safety report with clear insights and suggestions.
+
+Judges immediately understand the value: a practical, life-saving tool that combines sensor data with smart AI coaching. It’s visual, interactive, and shows both real-time protection and long-term behavior improvement.Tagline: Ride safer. Improve faster. With SafeRide AI.
+

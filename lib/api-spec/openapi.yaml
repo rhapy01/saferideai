@@ -3,13 +3,17 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: SafeRide AI API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: rides
+    description: Ride tracking and safety
+  - name: gemini
+    description: Gemini AI chat and image operations
 paths:
   /healthz:
     get:
@@ -24,6 +28,320 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /rides:
+    get:
+      operationId: listRides
+      tags: [rides]
+      summary: List all rides
+      responses:
+        "200":
+          description: List of rides
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ride"
+    post:
+      operationId: createRide
+      tags: [rides]
+      summary: Start a new ride
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RideInput"
+      responses:
+        "201":
+          description: Ride created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ride"
+
+  /rides/stats:
+    get:
+      operationId: getRideStats
+      tags: [rides]
+      summary: Get overall riding stats
+      responses:
+        "200":
+          description: Ride stats summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RideStats"
+
+  /rides/{id}:
+    get:
+      operationId: getRide
+      tags: [rides]
+      summary: Get ride details with events
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ride with events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RideWithEvents"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    patch:
+      operationId: updateRide
+      tags: [rides]
+      summary: Update ride (end it or update safety score)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RideUpdate"
+      responses:
+        "200":
+          description: Updated ride
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ride"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteRide
+      tags: [rides]
+      summary: Delete a ride
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /rides/{id}/events:
+    get:
+      operationId: listRideEvents
+      tags: [rides]
+      summary: List events for a ride
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RideEvent"
+    post:
+      operationId: createRideEvent
+      tags: [rides]
+      summary: Log a safety event during a ride
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RideEventInput"
+      responses:
+        "201":
+          description: Event created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RideEvent"
+
+  /rides/{id}/analyze:
+    post:
+      operationId: analyzeRide
+      tags: [rides]
+      summary: Generate AI safety report for a ride (SSE stream)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SSE stream of AI analysis
+          content:
+            text/event-stream: {}
+
+  /gemini/conversations:
+    get:
+      operationId: listGeminiConversations
+      tags: [gemini]
+      summary: List all conversations
+      responses:
+        "200":
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GeminiConversation"
+    post:
+      operationId: createGeminiConversation
+      tags: [gemini]
+      summary: Create a new conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiConversationInput"
+      responses:
+        "201":
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiConversation"
+  /gemini/conversations/{id}:
+    get:
+      operationId: getGeminiConversation
+      tags: [gemini]
+      summary: Get conversation with messages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conversation with messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiConversationWithMessages"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiError"
+    delete:
+      operationId: deleteGeminiConversation
+      tags: [gemini]
+      summary: Delete a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiError"
+  /gemini/conversations/{id}/messages:
+    get:
+      operationId: listGeminiMessages
+      tags: [gemini]
+      summary: List messages in a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GeminiMessage"
+    post:
+      operationId: sendGeminiMessage
+      tags: [gemini]
+      summary: Send a message and receive an AI response (SSE stream)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiMessageInput"
+      responses:
+        "200":
+          description: SSE stream of assistant response chunks
+          content:
+            text/event-stream: {}
+  /gemini/generate-image:
+    post:
+      operationId: generateGeminiImage
+      tags: [gemini]
+      summary: Generate an image from a text prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiImageInput"
+      responses:
+        "200":
+          description: Generated image data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiImageOutput"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +352,284 @@ components:
       required:
         - status
 
+    Ride:
+      type: object
+      properties:
+        id:
+          type: integer
+        mode:
+          type: string
+          enum: [real, simulate]
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: ["string", "null"]
+          format: date-time
+        safetyScore:
+          type: ["number", "null"]
+        maxSpeed:
+          type: ["number", "null"]
+        totalDistance:
+          type: ["number", "null"]
+        eventCount:
+          type: integer
+        aiReport:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - mode
+        - startedAt
+        - endedAt
+        - safetyScore
+        - maxSpeed
+        - totalDistance
+        - eventCount
+        - aiReport
+        - createdAt
+
+    RideInput:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [real, simulate]
+      required:
+        - mode
+
+    RideUpdate:
+      type: object
+      properties:
+        endedAt:
+          type: string
+          format: date-time
+        safetyScore:
+          type: number
+        maxSpeed:
+          type: number
+        totalDistance:
+          type: number
+        aiReport:
+          type: string
+
+    RideEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+        rideId:
+          type: integer
+        type:
+          type: string
+          enum: [speeding, harsh_braking, sharp_turn]
+        severity:
+          type: string
+          enum: [low, medium, high]
+        lat:
+          type: ["number", "null"]
+        lng:
+          type: ["number", "null"]
+        speed:
+          type: ["number", "null"]
+        timestamp:
+          type: string
+          format: date-time
+      required:
+        - id
+        - rideId
+        - type
+        - severity
+        - lat
+        - lng
+        - speed
+        - timestamp
+
+    RideEventInput:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [speeding, harsh_braking, sharp_turn]
+        severity:
+          type: string
+          enum: [low, medium, high]
+        lat:
+          type: number
+        lng:
+          type: number
+        speed:
+          type: number
+      required:
+        - type
+        - severity
+
+    RideWithEvents:
+      type: object
+      properties:
+        id:
+          type: integer
+        mode:
+          type: string
+          enum: [real, simulate]
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: ["string", "null"]
+          format: date-time
+        safetyScore:
+          type: ["number", "null"]
+        maxSpeed:
+          type: ["number", "null"]
+        totalDistance:
+          type: ["number", "null"]
+        eventCount:
+          type: integer
+        aiReport:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/RideEvent"
+      required:
+        - id
+        - mode
+        - startedAt
+        - endedAt
+        - safetyScore
+        - maxSpeed
+        - totalDistance
+        - eventCount
+        - aiReport
+        - createdAt
+        - events
+
+    RideStats:
+      type: object
+      properties:
+        totalRides:
+          type: integer
+        avgSafetyScore:
+          type: ["number", "null"]
+        totalDistance:
+          type: ["number", "null"]
+        totalEvents:
+          type: integer
+        bestScore:
+          type: ["number", "null"]
+        recentTrend:
+          type: string
+          enum: [improving, declining, stable]
+      required:
+        - totalRides
+        - avgSafetyScore
+        - totalDistance
+        - totalEvents
+        - bestScore
+        - recentTrend
+
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    GeminiConversation:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - createdAt
+    GeminiMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        conversationId:
+          type: integer
+        role:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - conversationId
+        - role
+        - content
+        - createdAt
+    GeminiConversationInput:
+      type: object
+      properties:
+        title:
+          type: string
+      required:
+        - title
+    GeminiMessageInput:
+      type: object
+      properties:
+        content:
+          type: string
+      required:
+        - content
+    GeminiConversationWithMessages:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/GeminiMessage"
+      required:
+        - id
+        - title
+        - createdAt
+        - messages
+    GeminiImageInput:
+      type: object
+      properties:
+        prompt:
+          type: string
+      required:
+        - prompt
+    GeminiImageOutput:
+      type: object
+      properties:
+        b64_json:
+          type: string
+        mimeType:
+          type: string
+      required:
+        - b64_json
+        - mimeType
+    GeminiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error

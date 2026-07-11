@@ -5,7 +5,8 @@
  * SafeRide AI API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RideInputMode } from './rideInputMode';
 
-export interface HealthStatus {
-  status: string;
+export interface RideInput {
+  mode: RideInputMode;
 }

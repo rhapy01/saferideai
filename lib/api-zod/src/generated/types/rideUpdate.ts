@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface RideUpdate {
+  endedAt?: Date;
+  safetyScore?: number;
+  maxSpeed?: number;
+  totalDistance?: number;
+  aiReport?: string;
 }
