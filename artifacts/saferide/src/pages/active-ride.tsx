@@ -5,13 +5,15 @@ import { Gauge } from "@/components/ui/gauge";
 import { RideMap, type RiskPoint } from "@/components/ride-map";
 import { useToast } from "@/hooks/use-toast";
 import { SIM_RIDE } from "@/lib/simulateRide";
-import { calculateScoreDelta, haversineKm } from "@/lib/safety";
+import { calculateScoreDelta, haversineKm, type SafetyEventType } from "@/lib/safety";
 import { Play, Square, Activity, Gauge as GaugeIcon, MapPin, Zap } from "lucide-react";
 
 type LocalEvent = RiskPoint & {
   type: string;
   detail: string;
 };
+
+const TRACK_KEY = (id: number) => `saferide-track-${id}`;
 
 export default function ActiveRide() {
   const [, setLocation] = useLocation();
@@ -35,14 +37,110 @@ export default function ActiveRide() {
 
   const simulateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const geoWatchRef = useRef<number | null>(null);
+  const motionHandlerRef = useRef<((e: DeviceMotionEvent) => void) | null>(null);
   const lastLocationRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null);
+  const lastSpeedSampleRef = useRef<{ speedMpS: number; t: number } | null>(null);
+  const motionRef = useRef({ accelZ: 0, lateralAccel: 0 });
   const scoreRef = useRef(100);
   const distanceRef = useRef(0);
   const maxSpeedRef = useRef(0);
   const frameRef = useRef(0);
   const rideIdRef = useRef<number | null>(null);
-
   const finishingRef = useRef(false);
+  const trackRef = useRef<{ lat: number; lng: number }[]>([]);
+  /** Edge-trigger: only log each risk type when it newly starts */
+  const activeRisksRef = useRef<Set<SafetyEventType>>(new Set());
+  const pendingEventsRef = useRef<Promise<unknown>[]>([]);
+
+  const stopMotion = () => {
+    if (motionHandlerRef.current) {
+      window.removeEventListener("devicemotion", motionHandlerRef.current);
+      motionHandlerRef.current = null;
+    }
+    motionRef.current = { accelZ: 0, lateralAccel: 0 };
+    lastSpeedSampleRef.current = null;
+  };
+
+  const startMotion = async () => {
+    stopMotion();
+    const DM = DeviceMotionEvent as unknown as {
+      requestPermission?: () => Promise<"granted" | "denied">;
+    };
+    if (typeof DM.requestPermission === "function") {
+      try {
+        const perm = await DM.requestPermission();
+        if (perm !== "granted") return;
+      } catch {
+        return;
+      }
+    }
+    const onMotion = (e: DeviceMotionEvent) => {
+      const a = e.acceleration;
+      if (!a) return;
+      // Phone accel: z ≈ vertical; xy plane ≈ lateral for turn detection
+      if (typeof a.z === "number") motionRef.current.accelZ = a.z;
+      const lx = a.x ?? 0;
+      const ly = a.y ?? 0;
+      motionRef.current.lateralAccel = Math.hypot(lx, ly);
+    };
+    motionHandlerRef.current = onMotion;
+    window.addEventListener("devicemotion", onMotion);
+  };
+
+  const persistTrack = (id: number) => {
+    try {
+      sessionStorage.setItem(TRACK_KEY(id), JSON.stringify(trackRef.current));
+    } catch {
+      /* ignore quota */
+    }
+  };
+
+  const logRiskOnce = (
+    rideDbId: number,
+    frame: { lat: number; lng: number; speed: number },
+    detected: ReturnType<typeof calculateScoreDelta>["events"],
+  ) => {
+    const seen = new Set<SafetyEventType>();
+    for (const ev of detected) {
+      seen.add(ev.type);
+      if (activeRisksRef.current.has(ev.type)) continue; // still in same episode — don't spam
+
+      activeRisksRef.current.add(ev.type);
+      const local: LocalEvent = {
+        lat: frame.lat,
+        lng: frame.lng,
+        severity: ev.severity,
+        label: `${ev.type.replaceAll("_", " ")} — ${ev.detail}`,
+        type: ev.type,
+        detail: ev.detail,
+      };
+      setEvents((prev) => [...prev, local]);
+
+      const p = createEvent.mutateAsync({
+        id: rideDbId,
+        data: {
+          type: ev.type,
+          severity: ev.severity,
+          speed: frame.speed,
+          lat: frame.lat,
+          lng: frame.lng,
+        },
+      });
+      pendingEventsRef.current.push(p.catch(() => null));
+
+      toast({
+        title: ev.type.replaceAll("_", " ").toUpperCase(),
+        description: ev.detail,
+        variant: "destructive",
+        duration: 2500,
+      });
+    }
+
+    // Clear episodes that ended
+    for (const type of [...activeRisksRef.current]) {
+      if (!seen.has(type)) activeRisksRef.current.delete(type);
+    }
+  };
 
   const finishRide = async () => {
     if (finishingRef.current) return;
@@ -56,6 +154,7 @@ export default function ActiveRide() {
       navigator.geolocation.clearWatch(geoWatchRef.current);
       geoWatchRef.current = null;
     }
+    stopMotion();
 
     setIsActive(false);
     const id = rideIdRef.current;
@@ -63,6 +162,9 @@ export default function ActiveRide() {
       finishingRef.current = false;
       return;
     }
+
+    persistTrack(id);
+    await Promise.allSettled(pendingEventsRef.current);
 
     try {
       await updateRide.mutateAsync({
@@ -93,6 +195,9 @@ export default function ActiveRide() {
       distanceRef.current = 0;
       maxSpeedRef.current = 0;
       frameRef.current = 0;
+      trackRef.current = [];
+      activeRisksRef.current = new Set();
+      pendingEventsRef.current = [];
       setSafetyScore(100);
       setDistance(0);
       setMaxSpeed(0);
@@ -119,7 +224,10 @@ export default function ActiveRide() {
         setCurrentSpeed(Math.round(frame.speed));
         maxSpeedRef.current = Math.max(maxSpeedRef.current, frame.speed);
         setMaxSpeed(maxSpeedRef.current);
-        setTrack((t) => [...t, { lat: frame.lat, lng: frame.lng }]);
+
+        const point = { lat: frame.lat, lng: frame.lng };
+        trackRef.current = [...trackRef.current, point];
+        setTrack(trackRef.current);
         setFrameIdx(i);
 
         const { delta, events: detected } = calculateScoreDelta({
@@ -129,39 +237,22 @@ export default function ActiveRide() {
           lateralAccel: frame.lateralAccel,
         });
 
-        if (delta !== 0) {
+        const isNewEpisode = detected.some((ev) => !activeRisksRef.current.has(ev.type));
+        if (isNewEpisode) {
+          // Full penalty once when a risk episode starts
           scoreRef.current = Math.max(0, Math.min(100, scoreRef.current + delta));
+          setSafetyScore(scoreRef.current);
+        } else if (detected.length === 0 && delta > 0) {
+          // Clean riding recovery
+          scoreRef.current = Math.max(0, Math.min(100, scoreRef.current + delta));
+          setSafetyScore(scoreRef.current);
+        } else if (detected.length > 0) {
+          // Sustained risk: slow drip, not another -8 every tick
+          scoreRef.current = Math.max(0, Math.min(100, scoreRef.current - 0.35));
           setSafetyScore(scoreRef.current);
         }
 
-        for (const ev of detected) {
-          const local: LocalEvent = {
-            lat: frame.lat,
-            lng: frame.lng,
-            severity: ev.severity,
-            label: `${ev.type.replaceAll("_", " ")} — ${ev.detail}`,
-            type: ev.type,
-            detail: ev.detail,
-          };
-          setEvents((prev) => [...prev, local]);
-          createEvent.mutate({
-            id: ride.id,
-            data: {
-              type: ev.type,
-              severity: ev.severity,
-              speed: frame.speed,
-              lat: frame.lat,
-              lng: frame.lng,
-            },
-          });
-          toast({
-            title: ev.type.replaceAll("_", " ").toUpperCase(),
-            description: ev.detail,
-            variant: "destructive",
-            duration: 2500,
-          });
-        }
-
+        logRiskOnce(ride.id, frame, detected);
         frameRef.current = i + 1;
       }, SIM_RIDE.tickMs);
     } catch {
@@ -190,6 +281,9 @@ export default function ActiveRide() {
       scoreRef.current = 100;
       distanceRef.current = 0;
       maxSpeedRef.current = 0;
+      trackRef.current = [];
+      activeRisksRef.current = new Set();
+      pendingEventsRef.current = [];
       setSafetyScore(100);
       setDistance(0);
       setMaxSpeed(0);
@@ -197,16 +291,19 @@ export default function ActiveRide() {
       setTrack([]);
       setEvents([]);
 
+      await startMotion();
+
       geoWatchRef.current = navigator.geolocation.watchPosition(
         (pos) => {
-          const speedMpS = pos.coords.speed || 0;
+          const speedMpS = pos.coords.speed ?? 0;
           const speedKmH = speedMpS * 3.6;
           const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
 
           setCurrentSpeed(Math.round(speedKmH));
           maxSpeedRef.current = Math.max(maxSpeedRef.current, speedKmH);
           setMaxSpeed(maxSpeedRef.current);
-          setTrack((t) => [...t, point]);
+          trackRef.current = [...trackRef.current, point];
+          setTrack(trackRef.current);
 
           if (lastLocationRef.current) {
             const d = haversineKm(lastLocationRef.current, point);
@@ -217,41 +314,46 @@ export default function ActiveRide() {
           }
           lastLocationRef.current = { ...point, timestamp: pos.timestamp };
 
+          // GPS speed delta ≈ longitudinal accel when DeviceMotion is weak/denied
+          let accelFromGps = 0;
+          const prevSp = lastSpeedSampleRef.current;
+          if (prevSp && pos.coords.speed != null) {
+            const dt = (pos.timestamp - prevSp.t) / 1000;
+            if (dt > 0.25 && dt < 4) {
+              accelFromGps = (speedMpS - prevSp.speedMpS) / dt;
+            }
+          }
+          if (pos.coords.speed != null) {
+            lastSpeedSampleRef.current = { speedMpS, t: pos.timestamp };
+          }
+
+          const deviceZ = motionRef.current.accelZ;
+          const accelZ =
+            deviceZ !== 0
+              ? Math.min(deviceZ, accelFromGps || deviceZ)
+              : accelFromGps;
+          const lateralAccel = motionRef.current.lateralAccel;
+
           const { delta, events: detected } = calculateScoreDelta({
             currentSpeed: speedKmH,
             speedLimit: 50,
-            accelZ: 0,
-            lateralAccel: 0,
+            accelZ,
+            lateralAccel,
           });
 
-          if (delta !== 0) {
+          const isNewEpisode = detected.some((ev) => !activeRisksRef.current.has(ev.type));
+          if (isNewEpisode) {
             scoreRef.current = Math.max(0, Math.min(100, scoreRef.current + delta));
+            setSafetyScore(scoreRef.current);
+          } else if (detected.length === 0 && delta > 0) {
+            scoreRef.current = Math.max(0, Math.min(100, scoreRef.current + delta));
+            setSafetyScore(scoreRef.current);
+          } else if (detected.length > 0) {
+            scoreRef.current = Math.max(0, Math.min(100, scoreRef.current - 0.35));
             setSafetyScore(scoreRef.current);
           }
 
-          for (const ev of detected) {
-            setEvents((prev) => [
-              ...prev,
-              {
-                ...point,
-                severity: ev.severity,
-                label: `${ev.type} — ${ev.detail}`,
-                type: ev.type,
-                detail: ev.detail,
-              },
-            ]);
-            createEvent.mutate({
-              id: ride.id,
-              data: {
-                type: ev.type,
-                severity: ev.severity,
-                speed: speedKmH,
-                lat: point.lat,
-                lng: point.lng,
-              },
-            });
-            toast({ title: "Risk detected", description: ev.detail, variant: "destructive" });
-          }
+          logRiskOnce(ride.id, { ...point, speed: speedKmH }, detected);
         },
         (err) => console.warn(err),
         { enableHighAccuracy: true },
@@ -265,6 +367,7 @@ export default function ActiveRide() {
     return () => {
       if (simulateIntervalRef.current) clearInterval(simulateIntervalRef.current);
       if (geoWatchRef.current !== null) navigator.geolocation.clearWatch(geoWatchRef.current);
+      stopMotion();
     };
   }, []);
 
@@ -286,7 +389,7 @@ export default function ActiveRide() {
         <Activity size={64} className="text-muted-foreground mb-6 opacity-20" />
         <h1 className="text-3xl font-bold mb-2">Ready to Ride</h1>
         <p className="text-muted-foreground text-sm mb-8 max-w-xs">
-          Demo judges: use Simulate Ride — Makerere → Nakawa with live score, events & map.
+          Demo: Simulate Makerere → Nakawa — live score, risk heat map, then Gemma 4 coaching.
         </p>
         <div className="space-y-4 w-full max-w-sm">
           <button

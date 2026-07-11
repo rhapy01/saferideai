@@ -1,10 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useLocation } from "wouter";
 import { useGetRide, getAnalyzeRideUrl } from "@workspace/api-client-react";
 import { Gauge } from "@/components/ui/gauge";
 import { RideMap, type RiskPoint } from "@/components/ride-map";
 import { scoreToGrade } from "@/lib/safety";
 import { ArrowLeft, RefreshCw, Zap, Copy } from "lucide-react";
+
+const TRACK_KEY = (id: number) => `saferide-track-${id}`;
+
+function loadTrack(id: number): { lat: number; lng: number }[] {
+  try {
+    const raw = sessionStorage.getItem(TRACK_KEY(id));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { lat: number; lng: number }[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function PostRide() {
   const params = useParams<{ id: string }>();
@@ -16,6 +29,8 @@ export default function PostRide() {
   const [model, setModel] = useState("gemma-4-26b-a4b-it");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedTrack, setSavedTrack] = useState<{ lat: number; lng: number }[]>([]);
+  const analyzeStarted = useRef(false);
 
   const runAnalyze = async () => {
     if (!id || Number.isNaN(id)) return;
@@ -25,6 +40,16 @@ export default function PostRide() {
 
     try {
       const res = await fetch(getAnalyzeRideUrl(id), { method: "POST" });
+      // 504/502: gateway killed a slow AI call — refetch in case a prior report landed
+      if (res.status === 504 || res.status === 502) {
+        const refreshed = await refetch();
+        const saved = refreshed.data?.aiReport;
+        if (saved) {
+          setReport(saved);
+          return;
+        }
+        throw new Error("Analyze timed out — tap Retry (usually under 30s)");
+      }
       if (!res.ok || !res.body) {
         throw new Error(`Analyze failed (${res.status})`);
       }
@@ -33,6 +58,7 @@ export default function PostRide() {
       const decoder = new TextDecoder();
       let buffer = "";
       let assembled = "";
+      let sawError: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -51,11 +77,10 @@ export default function PostRide() {
               done?: boolean;
               error?: string;
               model?: string;
+              status?: string;
             };
             if (data.model) setModel(data.model);
-            if (data.error) {
-              setError(data.error);
-            }
+            if (data.error) sawError = data.error;
             if (data.content) {
               assembled += data.content;
               setReport(assembled);
@@ -66,11 +91,11 @@ export default function PostRide() {
         }
       }
 
-      if (!assembled && !error) {
-        await refetch();
-      }
+      if (sawError && !assembled) setError(sawError);
+      if (!assembled && !sawError) await refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gemma report failed");
+      analyzeStarted.current = false; // allow retry
     } finally {
       setLoading(false);
       void refetch();
@@ -78,12 +103,17 @@ export default function PostRide() {
   };
 
   useEffect(() => {
+    if (!Number.isNaN(id)) setSavedTrack(loadTrack(id));
+  }, [id]);
+
+  useEffect(() => {
     if (!ride) return;
     if (ride.aiReport) {
       setReport(ride.aiReport);
       return;
     }
-    if (ride.endedAt) {
+    if (ride.endedAt && !analyzeStarted.current) {
+      analyzeStarted.current = true;
       void runAnalyze();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,11 +132,6 @@ export default function PostRide() {
   const scoreColor =
     score >= 75 ? "text-primary" : score >= 50 ? "text-yellow-500" : "text-destructive";
 
-  const track =
-    ride.events
-      ?.filter((e) => e.lat != null && e.lng != null)
-      .map((e) => ({ lat: e.lat!, lng: e.lng! })) ?? [];
-
   const riskPoints: RiskPoint[] =
     ride.events
       ?.filter((e) => e.lat != null && e.lng != null)
@@ -116,6 +141,11 @@ export default function PostRide() {
         severity: e.severity,
         label: `${e.type.replaceAll("_", " ")}${e.speed != null ? ` @ ${e.speed.toFixed(0)} km/h` : ""}`,
       })) ?? [];
+
+  const track =
+    savedTrack.length > 1
+      ? savedTrack
+      : riskPoints.map((p) => ({ lat: p.lat, lng: p.lng }));
 
   const copyReport = async () => {
     const text = [
@@ -178,7 +208,10 @@ export default function PostRide() {
             <p className="text-sm text-destructive">{error}</p>
             <button
               type="button"
-              onClick={() => void runAnalyze()}
+              onClick={() => {
+                analyzeStarted.current = true;
+                void runAnalyze();
+              }}
               className="text-sm flex items-center gap-1 text-primary"
             >
               <RefreshCw size={14} /> Retry
@@ -191,9 +224,9 @@ export default function PostRide() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="font-semibold text-sm">Route & risk markers</h2>
+        <h2 className="font-semibold text-sm">Route & risk heat</h2>
         <RideMap
-          track={track.length ? track : riskPoints}
+          track={track}
           riskPoints={riskPoints}
           current={track[track.length - 1] ?? riskPoints[riskPoints.length - 1]}
           height={240}
@@ -228,6 +261,11 @@ export default function PostRide() {
           </ul>
         )}
       </section>
+
+      <p className="text-[11px] text-muted-foreground leading-relaxed">
+        Assistive coaching only — not medical, legal, or emergency advice. Sensors are rule-based;
+        Simulate Ride is for reliable demos.
+      </p>
 
       <div className="flex gap-2">
         <button

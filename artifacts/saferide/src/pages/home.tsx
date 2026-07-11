@@ -1,6 +1,6 @@
 import { useGetRideStats, getGetRideStatsQueryKey, useListRides, getListRidesQueryKey } from "@workspace/api-client-react";
 import { Link } from "wouter";
-import { Gauge, Activity, History, ArrowRight, ShieldAlert, Navigation2 } from "lucide-react";
+import { ArrowRight, ShieldAlert, Navigation2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export default function Home() {
@@ -12,8 +12,10 @@ export default function Home() {
   return (
     <div className="flex-1 flex flex-col p-4 space-y-8 max-w-md mx-auto w-full pb-24">
       <header className="pt-8 pb-4">
-        <h1 className="text-3xl font-bold tracking-tight text-white mb-2">SafeRide <span className="text-primary">HUD</span></h1>
-        <p className="text-muted-foreground text-sm">Your AI safety companion.</p>
+        <h1 className="text-3xl font-bold tracking-tight text-white mb-2">SafeRide <span className="text-primary">AI</span></h1>
+        <p className="text-muted-foreground text-sm">
+          Kampala boda safety coach — live score, risk heat map, Gemma 4 tips.
+        </p>
       </header>
 
       <div className="grid grid-cols-2 gap-4">
@@ -21,12 +23,26 @@ export default function Home() {
           <div className="absolute top-0 right-0 p-4 opacity-10">
             <ShieldAlert size={80} />
           </div>
-          <p className="text-sm text-muted-foreground mb-1 font-medium tracking-wide uppercase">Avg Safety Score</p>
-          <div className="text-5xl font-mono font-bold text-primary tracking-tighter">
-            {statsLoading ? "--" : Math.round(stats?.avgSafetyScore || 0)}
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-sm text-muted-foreground mb-1 font-medium tracking-wide uppercase">Avg Safety Score</p>
+              <div className="text-5xl font-mono font-bold text-primary tracking-tighter">
+                {statsLoading ? "--" : Math.round(stats?.avgSafetyScore || 0)}
+              </div>
+            </div>
+            <div className="text-right pb-1">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Trend</p>
+              <p className={`text-sm font-mono font-semibold ${
+                stats?.recentTrend === "improving" ? "text-primary" :
+                stats?.recentTrend === "declining" ? "text-destructive" : "text-muted-foreground"
+              }`}>
+                {statsLoading ? "--" : stats?.recentTrend === "improving" ? "↑ improving" :
+                  stats?.recentTrend === "declining" ? "↓ declining" : "→ stable"}
+              </p>
+            </div>
           </div>
         </div>
-        
+
         <div className="bg-card border border-card-border p-4 rounded-xl">
           <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide">Total Rides</p>
           <div className="text-2xl font-mono text-white">
@@ -38,6 +54,20 @@ export default function Home() {
           <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide">Distance (km)</p>
           <div className="text-2xl font-mono text-white">
             {statsLoading ? "--" : Math.round(stats?.totalDistance || 0)}
+          </div>
+        </div>
+
+        <div className="bg-card border border-card-border p-4 rounded-xl">
+          <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide">Best Score</p>
+          <div className="text-2xl font-mono text-white">
+            {statsLoading ? "--" : stats?.bestScore != null ? Math.round(stats.bestScore) : "--"}
+          </div>
+        </div>
+
+        <div className="bg-card border border-card-border p-4 rounded-xl">
+          <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide">Risk Events</p>
+          <div className="text-2xl font-mono text-white">
+            {statsLoading ? "--" : stats?.totalEvents || 0}
           </div>
         </div>
       </div>

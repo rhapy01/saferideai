@@ -255,52 +255,143 @@ Tone: supportive but direct. Do not invent events. No markdown headers.`;
 
   const shortPrompt = `Boda safety coach for Kampala. Score ${ride.safetyScore?.toFixed(0) ?? "?"}/100. Max ${ride.maxSpeed?.toFixed(0) ?? "?"} km/h. Events: ${events.map((e) => e.type).join(", ") || "none"}. Write 80 words: assessment + 2 tips. No markdown.`;
 
+  /** Deterministic coach copy so demos never end on a blank report if Gemma flakes. */
+  const buildFallbackReport = (): string => {
+    const score = ride.safetyScore ?? 0;
+    const types = [...new Set(events.map((e) => e.type.replaceAll("_", " ")))];
+    const top =
+      types.length > 0
+        ? `Main issues logged: ${types.slice(0, 2).join(" and ")}.`
+        : "No high-risk events were logged — keep that calm spacing.";
+    const tip =
+      types.includes("speeding")
+        ? "Ease off earlier toward Nakawa junctions and hold nearer 50 km/h in dense traffic."
+        : types.includes("harsh braking")
+          ? "Add ~2 seconds following distance in stop-go Kampala traffic so braking stays smooth."
+          : types.includes("sharp turn")
+            ? "Slow before the bend, then roll on — sharp lean at speed is where bodas lose grip."
+            : "Scan ahead at junctions and keep a steady urban pace on Makerere–Nakawa corridors.";
+    const vibe =
+      score >= 85
+        ? "Strong ride overall."
+        : score >= 60
+          ? "Decent ride with a few habits to tighten."
+          : "Tough stretch — treat this as practice feedback, not a verdict.";
+    return `${vibe} Score ${Math.round(score)}/100 over ${ride.totalDistance?.toFixed(1) ?? "?"} km (max ${ride.maxSpeed?.toFixed(0) ?? "?"} km/h). ${top} Tip: ${tip} Ride safer next loop.`;
+  };
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
 
   const model = GEMMA_MODEL;
   let fullReport = "";
+  let usedFallback = false;
+
+  // Flush immediately so proxies/Vercel don't idle-timeout before Gemma returns
+  // (5 slow retries previously caused 504 after ~60s).
+  res.write(`data: ${JSON.stringify({ status: "analyzing", model })}\n\n`);
+  if (typeof (res as { flush?: () => void }).flush === "function") {
+    (res as { flush: () => void }).flush();
+  }
+
+  const startedAt = Date.now();
+  const DEADLINE_MS = 40_000;
+  const ATTEMPT_MS = 16_000;
+  const maxAttempts = 2;
+
+  const withTimeout = async <T,>(p: Promise<T>, ms: number): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        p,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Gemma timed out after ${ms}ms`)),
+            ms,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
 
   try {
-    const ai = getAi();
-    let lastErr: unknown;
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      try {
-        // Minimal request — hosted Gemma is picky; keep contents as plain string.
-        const response = await ai.models.generateContent({
-          model,
-          contents: attempt <= 3 ? prompt : shortPrompt,
-        });
-        fullReport = (response.text || "").trim();
-        if (fullReport) break;
-        lastErr = new Error("Empty response from Gemma");
-      } catch (err) {
-        lastErr = err;
-        logger.warn({ err, attempt, model }, "Gemma generate attempt failed");
-        if (attempt < 5) {
-          await new Promise((r) => setTimeout(r, 800 * attempt));
+    try {
+      const ai = getAi();
+      let lastErr: unknown;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const remaining = DEADLINE_MS - (Date.now() - startedAt);
+        if (remaining < 4_000) break;
+
+        const budget = Math.min(ATTEMPT_MS, remaining - 3_000);
+        const contents = attempt === 1 ? prompt : shortPrompt;
+        try {
+          const response = await withTimeout(
+            ai.models.generateContent({ model, contents }),
+            budget,
+          );
+          fullReport = (response.text || "").trim();
+          if (fullReport) break;
+          lastErr = new Error("Empty response from Gemma");
+        } catch (err) {
+          lastErr = err;
+          logger.warn({ err, attempt, model }, "Gemma generate attempt failed");
         }
       }
+      if (!fullReport) {
+        logger.warn({ lastErr, model }, "Gemma empty after retries — using fallback coach");
+      }
+    } catch (err) {
+      logger.warn({ err, model }, "Gemma unavailable — using fallback coach");
     }
 
     if (!fullReport) {
-      throw lastErr ?? new Error("Gemma returned empty report");
+      fullReport = buildFallbackReport();
+      usedFallback = true;
     }
 
-    res.write(`data: ${JSON.stringify({ content: fullReport, model })}\n\n`);
+    const reportModel = usedFallback ? `${model}+fallback` : model;
+    res.write(
+      `data: ${JSON.stringify({ content: fullReport, model: reportModel })}\n\n`,
+    );
 
     await db
       .update(ridesTable)
       .set({ aiReport: fullReport })
       .where(eq(ridesTable.id, params.data.id));
 
-    res.write(`data: ${JSON.stringify({ done: true, model })}\n\n`);
+    res.write(
+      `data: ${JSON.stringify({ done: true, model: reportModel })}\n\n`,
+    );
   } catch (err) {
-    logger.error({ err, model }, "Gemma analyze error");
-    const message =
-      err instanceof Error ? err.message : "AI analysis failed";
-    res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+    logger.error({ err, model }, "Analyze route error");
+    try {
+      if (!fullReport) {
+        fullReport = buildFallbackReport();
+        const reportModel = `${model}+fallback`;
+        res.write(
+          `data: ${JSON.stringify({ content: fullReport, model: reportModel })}\n\n`,
+        );
+        await db
+          .update(ridesTable)
+          .set({ aiReport: fullReport })
+          .where(eq(ridesTable.id, params.data.id));
+        res.write(
+          `data: ${JSON.stringify({ done: true, model: reportModel })}\n\n`,
+        );
+      } else {
+        const message =
+          err instanceof Error ? err.message : "AI analysis failed";
+        res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+      }
+    } catch {
+      const message =
+        err instanceof Error ? err.message : "AI analysis failed";
+      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+    }
   }
 
   res.end();

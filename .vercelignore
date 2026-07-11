@@ -1,0 +1,42 @@
+# Keep Vercel upload tiny — .local alone is ~370MB
+.local
+.cache
+.agents
+.cursor
+.idea
+.vscode
+.expo
+.expo-shared
+
+# Never upload deps / build artifacts (Vercel installs & builds fresh)
+node_modules
+**/node_modules
+**/dist
+tmp
+out-tsc
+**/*.tsbuildinfo
+**/*.map
+coverage
+
+# Replit / unused local clutter
+.replit
+.replitignore
+replit.md
+attached_assets
+
+# Secrets & OS junk
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Git (CLI deploy from local)
+.git
+
+# Local frontend/API dist — rebuilt on Vercel
+artifacts/api-server/dist
+artifacts/saferide/dist

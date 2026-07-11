@@ -93,6 +93,19 @@ export function RideMap({
         {line.length > 1 && (
           <Polyline positions={line} pathOptions={{ color: "#16a34a", weight: 4 }} />
         )}
+        {/* Soft risk heat under markers — readable “heatmap” without extra deps */}
+        {riskPoints.map((p, i) => (
+          <CircleMarker
+            key={`heat-${p.lat}-${p.lng}-${i}`}
+            center={[p.lat, p.lng]}
+            radius={p.severity === "high" ? 28 : p.severity === "medium" ? 22 : 16}
+            pathOptions={{
+              stroke: false,
+              fillColor: p.severity === "high" ? "#e74c3c" : p.severity === "medium" ? "#e67e22" : "#f1c40f",
+              fillOpacity: 0.22,
+            }}
+          />
+        ))}
         {riskPoints.map((p, i) => (
           <CircleMarker
             key={`${p.lat}-${p.lng}-${i}`}
